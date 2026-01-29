@@ -22,6 +22,11 @@ let uninstall = false;
 let targetsRaw = '';
 let githubInput = '';
 
+function printVersion() {
+  const pkg = require('../package.json');
+  console.log(`expcat-skills v${pkg.version}`);
+}
+
 function printHelp() {
   console.log(`Usage: expcat-skills [options] <github_path_or_url>
 
@@ -30,6 +35,7 @@ Options:
   -d, --dry-run         Preview only, no changes
   -ui, --uninstall      Interactively uninstall installed skills
   --clean-logs          Remove all installer logs
+  -v, --version         Show version number
   -h, --help            Show this help
 
 Examples:
@@ -52,6 +58,9 @@ function parseArgs() {
       cleanLogs = true;
     } else if (a === '-ui' || a === '--uninstall') {
       uninstall = true;
+    } else if (a === '-v' || a === '--version') {
+      printVersion();
+      process.exit(0);
     } else if (a === '-h' || a === '--help') {
       printHelp();
       process.exit(0);
