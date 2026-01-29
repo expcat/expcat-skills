@@ -1,0 +1,43 @@
+{
+  "name": "skills-installer",
+  "version": "0.1.0",
+  "description": "Cross-platform installer for expcat skills from GitHub paths",
+  "license": "MIT",
+  "keywords": [
+    "cli",
+    "installer",
+    "skills",
+    "copilot",
+    "claude",
+    "codex",
+    "opencode"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/expcat/expcat-skills.git#main:skills-installer"
+  },
+  "homepage": "https://github.com/expcat/expcat-skills/tree/main/skills-installer",
+  "bugs": {
+    "url": "https://github.com/expcat/expcat-skills/issues"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "preferGlobal": true,
+  "bin": {
+    "expcat-skills": "bin/expcat-skills.js"
+  },
+  "type": "commonjs",
+  "scripts": {
+    "pack": "npm pack",
+    "publish:public": "npm publish --access public"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
