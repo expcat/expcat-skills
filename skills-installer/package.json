@@ -1,6 +1,6 @@
 {
   "name": "@expcat/skills-installer",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Cross-platform installer for expcat skills from GitHub paths",
   "license": "MIT",
   "keywords": [
