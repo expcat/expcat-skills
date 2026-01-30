@@ -1,10 +1,10 @@
 ---
 name: dotnet
-description: Best practices for .NET 10 development covering ASP.NET Core APIs, Entity Framework Core, Blazor, .NET MAUI, AI integration with Microsoft.Extensions.AI, and cloud-native apps with .NET Aspire. Use when working with C#, .NET projects, NuGet packages, or Microsoft .NET ecosystem.
+description: Best practices for .NET 10 development covering ASP.NET Core APIs, Entity Framework Core, Blazor, .NET MAUI, Avalonia UI, AI integration with Microsoft.Extensions.AI, and cloud-native apps with .NET Aspire. Use when working with C#, .NET projects, NuGet packages, or Microsoft .NET ecosystem.
 license: MIT
 metadata:
   author: expcat
-  version: '2.1'
+  version: '2.2'
 ---
 
 # .NET Development Best Practices
@@ -20,6 +20,7 @@ Activate when:
 - Working with Entity Framework Core
 - Developing Blazor components
 - Building .NET MAUI cross-platform apps
+- Building Avalonia cross-platform desktop/mobile apps
 - Integrating AI with Microsoft.Extensions.AI
 - Creating cloud-native apps with .NET Aspire
 
@@ -34,6 +35,7 @@ Load specific references as needed:
 | [efcore.md](references/efcore.md)         | DbContext, vector search, JSON, migrations       |
 | [blazor.md](references/blazor.md)         | Components, state, forms, render modes           |
 | [maui.md](references/maui.md)             | MVVM, Shell navigation, platform code            |
+| [avalonia.md](references/avalonia.md)     | Cross-platform UI, MVVM, styles, themes          |
 | [ai.md](references/ai.md)                 | Microsoft.Extensions.AI, Agent Framework, MCP    |
 | [aspire.md](references/aspire.md)         | Orchestration, service discovery, telemetry      |
 
