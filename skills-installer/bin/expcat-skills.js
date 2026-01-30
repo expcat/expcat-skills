@@ -225,6 +225,23 @@ function requireGit() {
   }
 }
 
+function getGitVersion() {
+  const result = spawnSync('git', ['--version'], { encoding: 'utf8' });
+  if (result.status === 0) {
+    const match = result.stdout.match(/git version (\d+)\.(\d+)/);
+    if (match) {
+      return { major: parseInt(match[1], 10), minor: parseInt(match[2], 10) };
+    }
+  }
+  return { major: 0, minor: 0 };
+}
+
+function supportsSparseCheckout() {
+  const version = getGitVersion();
+  // sparse-checkout command available since Git 2.25
+  return version.major > 2 || (version.major === 2 && version.minor >= 25);
+}
+
 function normalizeGithubInput(input) {
   return input
     .replace(/^https?:\/\/github\.com\//, '')
@@ -280,7 +297,7 @@ function parseGithubParts(input) {
   return { owner, repo, ref, subpath };
 }
 
-function cloneRepo(owner, repo, ref, dest) {
+function cloneRepoFull(owner, repo, ref, dest) {
   const res = spawnSync(
     'git',
     [
@@ -288,6 +305,7 @@ function cloneRepo(owner, repo, ref, dest) {
       '--depth',
       '1',
       '--filter=blob:none',
+      '--single-branch',
       '--branch',
       ref,
       `https://github.com/${owner}/${repo}.git`,
@@ -301,6 +319,62 @@ function cloneRepo(owner, repo, ref, dest) {
     logError('Failed to clone repository');
     process.exit(1);
   }
+}
+
+function cloneRepoSparse(owner, repo, ref, subpath, dest) {
+  // Initialize empty repo
+  let res = spawnSync('git', ['init', dest], { stdio: 'ignore' });
+  if (res.status !== 0) return false;
+
+  // Add remote
+  res = spawnSync(
+    'git',
+    ['remote', 'add', 'origin', `https://github.com/${owner}/${repo}.git`],
+    { cwd: dest, stdio: 'ignore' },
+  );
+  if (res.status !== 0) return false;
+
+  // Enable sparse-checkout
+  res = spawnSync('git', ['sparse-checkout', 'init', '--cone'], {
+    cwd: dest,
+    stdio: 'ignore',
+  });
+  if (res.status !== 0) return false;
+
+  // Set sparse-checkout path
+  res = spawnSync('git', ['sparse-checkout', 'set', subpath], {
+    cwd: dest,
+    stdio: 'ignore',
+  });
+  if (res.status !== 0) return false;
+
+  // Shallow pull
+  res = spawnSync('git', ['pull', '--depth=1', 'origin', ref], {
+    cwd: dest,
+    stdio: 'ignore',
+  });
+  if (res.status !== 0) return false;
+
+  return true;
+}
+
+function cloneRepo(owner, repo, ref, subpath, dest) {
+  // Try sparse-checkout if subpath exists and Git supports it
+  if (subpath && supportsSparseCheckout()) {
+    logInfo('Using sparse-checkout to minimize download...');
+    const success = cloneRepoSparse(owner, repo, ref, subpath, dest);
+    if (success) {
+      return;
+    }
+    // Fallback: clean up failed sparse checkout and try full clone
+    logWarn('Sparse-checkout failed, falling back to full clone...');
+    try {
+      fs.rmSync(dest, { recursive: true, force: true });
+    } catch {}
+  }
+
+  // Full clone (original method with --single-branch)
+  cloneRepoFull(owner, repo, ref, dest);
 }
 
 function rlPrompt(rl, question) {
@@ -509,7 +583,7 @@ async function main() {
   });
 
   logInfo('Downloading repository...');
-  cloneRepo(owner, repo, ref, tmpDir);
+  cloneRepo(owner, repo, ref, subpath, tmpDir);
 
   let basePath = tmpDir;
   if (subpath) basePath = path.join(tmpDir, subpath);
@@ -524,7 +598,19 @@ async function main() {
   const targets = await selectTargets();
 
   let preview = '';
-  const tList = targets.split(',');
+  // Support both comma and space separated targets
+  const tList = targets.split(/[,\s]+/).filter(Boolean);
+
+  // Validate targets before proceeding
+  const validTargets = ['copilot', 'claude', 'codex', 'opencode'];
+  for (const t of tList) {
+    if (!validTargets.includes(t)) {
+      logError(`Unknown target: ${t}`);
+      logInfo(`Valid targets: ${validTargets.join(', ')}`);
+      process.exit(1);
+    }
+  }
+
   for (const t of tList) {
     const root = getTargetRoot(t);
     const dest = path.join(root, skillName);
@@ -541,6 +627,12 @@ async function main() {
     const root = getTargetRoot(t);
     await copySkill(selectedDir, root, skillName);
   }
+
+  // Clean up temporary directory immediately after copying
+  try {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    logInfo('Temporary files cleaned up.');
+  } catch {}
 
   logInfo(`Done. Log saved: ${LOG_FILE}`);
 }
