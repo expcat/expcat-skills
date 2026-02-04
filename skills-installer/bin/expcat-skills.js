@@ -19,8 +19,8 @@ const args = process.argv.slice(2);
 let dryRun = false;
 let cleanLogs = false;
 let uninstall = false;
-let targetsRaw = '';
 let githubInput = '';
+const TOOLS = ['copilot', 'claude', 'codex', 'opencode'];
 
 function printVersion() {
   const pkg = require('../package.json');
@@ -31,7 +31,6 @@ function printHelp() {
   console.log(`Usage: expcat-skills [options] <github_path_or_url>
 
 Options:
-  -t, --target <list>   Targets: copilot,claude,codex,opencode (comma-separated)
   -d, --dry-run         Preview only, no changes
   -ui, --uninstall      Interactively uninstall installed skills
   --clean-logs          Remove all installer logs
@@ -40,7 +39,6 @@ Options:
 
 Examples:
   expcat-skills https://github.com/expcat/Tigercat/tree/main/skills/tigercat
-  expcat-skills -t copilot,claude expcat/Tigercat/skills/tigercat
   expcat-skills -ui
   expcat-skills --uninstall --dry-run
 `);
@@ -49,15 +47,14 @@ Examples:
 function parseArgs() {
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
-    if (a === '-t' || a === '--target') {
-      targetsRaw = args[i + 1] || '';
-      i += 1;
-    } else if (a === '-d' || a === '--dry-run') {
+    if (a === '-d' || a === '--dry-run') {
       dryRun = true;
     } else if (a === '--clean-logs') {
       cleanLogs = true;
     } else if (a === '-ui' || a === '--uninstall') {
       uninstall = true;
+    } else if (a === '--elevated') {
+      process.env.EXPCAT_SKILLS_ELEVATED = '1';
     } else if (a === '-v' || a === '--version') {
       printVersion();
       process.exit(0);
@@ -143,10 +140,10 @@ function isDirectoryEmpty(dirPath) {
 }
 
 function scanInstalledSkills() {
-  const tools = ['copilot', 'claude', 'codex', 'opencode'];
+  const tools = TOOLS;
   const results = [];
   for (const tool of tools) {
-    const root = getTargetRoot(tool, true);
+    const root = getToolSkillsPath(tool, true);
     if (root && fs.existsSync(root)) {
       const entries = fs.readdirSync(root, { withFileTypes: true });
       for (const e of entries) {
@@ -455,23 +452,24 @@ async function selectDirectoryStepwise(basePath) {
 }
 
 async function selectTargets() {
-  const choices = ['copilot', 'claude', 'codex', 'opencode'];
-  if (targetsRaw) return targetsRaw;
-
+  const choices = getAvailableTargets();
+  if (choices.length === 0) {
+    logInfo('All targets already mapped. Skip target selection.');
+    return [];
+  }
   const selected = await checkbox({
     message: 'Select install targets:',
     choices: choices.map((t) => ({ name: t, value: t })),
-    required: true,
   });
 
-  if (!selected.length) {
-    logError('No targets selected');
-    process.exit(1);
-  }
-  return selected.join(',');
+  return selected;
 }
 
-function getTargetRoot(tool, silent = false) {
+function getAgentsSkillsRoot() {
+  return path.join(os.homedir(), '.agents', 'skills');
+}
+
+function getToolSkillsPath(tool, silent = false) {
   const home = os.homedir();
   switch (tool) {
     case 'claude':
@@ -489,6 +487,95 @@ function getTargetRoot(tool, silent = false) {
       }
       return null;
   }
+}
+
+function getAvailableTargets() {
+  return TOOLS.filter((t) => !isSkillsLinked(t));
+}
+
+function resolveLinkTarget(linkPath, linkTarget) {
+  if (path.isAbsolute(linkTarget)) return path.resolve(linkTarget);
+  return path.resolve(path.dirname(linkPath), linkTarget);
+}
+
+function isSkillsLinked(tool) {
+  const toolSkillsPath = getToolSkillsPath(tool, true);
+  if (!toolSkillsPath || !fs.existsSync(toolSkillsPath)) return false;
+  try {
+    const stat = fs.lstatSync(toolSkillsPath);
+    if (!stat.isSymbolicLink()) return false;
+    const linkTarget = fs.readlinkSync(toolSkillsPath);
+    const resolved = resolveLinkTarget(toolSkillsPath, linkTarget);
+    return path.resolve(resolved) === path.resolve(getAgentsSkillsRoot());
+  } catch {
+    return false;
+  }
+}
+
+function psQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function psArray(values) {
+  return `@(${values.map(psQuote).join(',')})`;
+}
+
+function relaunchAsAdmin() {
+  const argv = process.argv.slice(1);
+  if (!argv.includes('--elevated')) argv.push('--elevated');
+  const command = `Start-Process -FilePath ${psQuote(
+    process.execPath,
+  )} -ArgumentList ${psArray(argv)} -WorkingDirectory ${psQuote(
+    process.cwd(),
+  )} -Verb RunAs`;
+
+  const res = spawnSync('powershell', ['-NoProfile', '-Command', command], {
+    stdio: 'inherit',
+  });
+  return res.status === 0;
+}
+
+function canCreateSymlink() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'expcat-skills-link-'));
+  const targetDir = path.join(tmpDir, 'target');
+  const linkPath = path.join(tmpDir, 'link');
+  fs.mkdirSync(targetDir, { recursive: true });
+  try {
+    fs.symlinkSync(
+      targetDir,
+      linkPath,
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    return true;
+  } catch (err) {
+    if (err && (err.code === 'EPERM' || err.code === 'EACCES')) return false;
+    throw err;
+  } finally {
+    try {
+      if (fs.existsSync(linkPath)) fs.rmSync(linkPath, { recursive: true, force: true });
+      if (fs.existsSync(targetDir)) fs.rmSync(targetDir, { recursive: true, force: true });
+      if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+function ensureSymlinkPrivilegeOrRelaunch() {
+  if (process.platform !== 'win32') return;
+  if (canCreateSymlink()) return;
+
+  if (process.env.EXPCAT_SKILLS_ELEVATED === '1') {
+    logError('Unable to create symlink. Please enable Developer Mode or run as Administrator and retry.');
+    process.exit(1);
+  }
+
+  logWarn('Symlink permission required. Requesting elevation...');
+  const ok = relaunchAsAdmin();
+  if (!ok) {
+    logError('Elevation was cancelled or failed. Please run as Administrator and retry.');
+    process.exit(1);
+  }
+
+  process.exit(0);
 }
 
 async function confirmPreview(preview) {
@@ -550,6 +637,39 @@ async function copySkill(src, destRoot, skillName) {
   }
 }
 
+async function linkSkillsDir(agentsRoot, tool) {
+  const toolSkillsPath = getToolSkillsPath(tool);
+  if (isSkillsLinked(tool)) {
+    logInfo(`${tool} already mapped to ${agentsRoot.replace(os.homedir(), '~')}`);
+    return;
+  }
+
+  if (fs.existsSync(toolSkillsPath)) {
+    const overwrite = await confirm({
+      message: `${tool} skills directory exists. Replace with symlink?`,
+      default: false,
+    });
+    if (!overwrite) {
+      logWarn(`Skipped mapping for ${tool}.`);
+      return;
+    }
+    if (!dryRun) fs.rmSync(toolSkillsPath, { recursive: true, force: true });
+  }
+
+  if (dryRun) {
+    logInfo(`[dry-run] Link ${toolSkillsPath} -> ${agentsRoot}`);
+    return;
+  }
+
+  fs.mkdirSync(path.dirname(toolSkillsPath), { recursive: true });
+  fs.symlinkSync(
+    agentsRoot,
+    toolSkillsPath,
+    process.platform === 'win32' ? 'junction' : 'dir',
+  );
+  logInfo(`Mapped: ${toolSkillsPath.replace(os.homedir(), '~')} -> ${agentsRoot.replace(os.homedir(), '~')}`);
+}
+
 async function main() {
   parseArgs();
 
@@ -597,24 +717,23 @@ async function main() {
   const skillName = path.basename(selectedDir);
   const targets = await selectTargets();
 
-  let preview = '';
-  // Support both comma and space separated targets
-  const tList = targets.split(/[,\s]+/).filter(Boolean);
-
-  // Validate targets before proceeding
-  const validTargets = ['copilot', 'claude', 'codex', 'opencode'];
-  for (const t of tList) {
-    if (!validTargets.includes(t)) {
-      logError(`Unknown target: ${t}`);
-      logInfo(`Valid targets: ${validTargets.join(', ')}`);
-      process.exit(1);
-    }
+  if (targets.length > 0 && !dryRun) {
+    ensureSymlinkPrivilegeOrRelaunch();
   }
 
-  for (const t of tList) {
-    const root = getTargetRoot(t);
-    const dest = path.join(root, skillName);
-    preview += `- ${t} -> ${dest}${fs.existsSync(dest) ? ' (conflict)' : ''}\n`;
+  let preview = '';
+  const agentsRoot = getAgentsSkillsRoot();
+  const agentsDest = path.join(agentsRoot, skillName);
+  preview += `- agents -> ${agentsDest}${fs.existsSync(agentsDest) ? ' (conflict)' : ''}\n`;
+
+  if (targets.length === 0) {
+    preview += `- mapping -> (none)\n`;
+  } else {
+    for (const t of targets) {
+      const toolSkillsPath = getToolSkillsPath(t);
+      const conflict = fs.existsSync(toolSkillsPath) && !isSkillsLinked(t);
+      preview += `- ${t} -> ${toolSkillsPath} -> ${agentsRoot}${conflict ? ' (conflict)' : ''}\n`;
+    }
   }
 
   const ok = await confirmPreview(preview);
@@ -623,9 +742,10 @@ async function main() {
     process.exit(1);
   }
 
-  for (const t of tList) {
-    const root = getTargetRoot(t);
-    await copySkill(selectedDir, root, skillName);
+  await copySkill(selectedDir, agentsRoot, skillName);
+
+  for (const t of targets) {
+    await linkSkillsDir(agentsRoot, t);
   }
 
   // Clean up temporary directory immediately after copying
