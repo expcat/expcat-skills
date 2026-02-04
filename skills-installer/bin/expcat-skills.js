@@ -18,9 +18,10 @@ const COLORS = {
 const args = process.argv.slice(2);
 let dryRun = false;
 let cleanLogs = false;
+let cleanSkills = false;
 let uninstall = false;
 let githubInput = '';
-const TOOLS = ['copilot', 'claude', 'codex', 'opencode'];
+const TOOLS = ['copilot', 'claude', 'codex', 'opencode', 'gemini'];
 
 function printVersion() {
   const pkg = require('../package.json');
@@ -34,6 +35,7 @@ Options:
   -d, --dry-run         Preview only, no changes
   -ui, --uninstall      Interactively uninstall installed skills
   --clean-logs          Remove all installer logs
+  --clean-skills        Remove empty tool skills directories
   -v, --version         Show version number
   -h, --help            Show this help
 
@@ -51,6 +53,8 @@ function parseArgs() {
       dryRun = true;
     } else if (a === '--clean-logs') {
       cleanLogs = true;
+    } else if (a === '--clean-skills') {
+      cleanSkills = true;
     } else if (a === '-ui' || a === '--uninstall') {
       uninstall = true;
     } else if (a === '--elevated') {
@@ -108,6 +112,36 @@ function purgeLogs() {
     }
   }
   console.log(`Logs cleaned: ${LOG_DIR}`);
+}
+
+function cleanEmptyToolSkillsDirs() {
+  const removed = [];
+  for (const tool of TOOLS) {
+    const skillsPath = getToolSkillsPath(tool, true);
+    if (!skillsPath || !fs.existsSync(skillsPath)) continue;
+    try {
+      if (isDirectoryEmpty(skillsPath)) {
+        if (dryRun) {
+          logInfo(`[dry-run] Would remove empty dir: ${skillsPath}`);
+        } else {
+          fs.rmSync(skillsPath, { recursive: true, force: true });
+          removed.push(skillsPath);
+        }
+      }
+    } catch (err) {
+      logWarn(`Failed to check ${skillsPath}: ${err?.message || err}`);
+    }
+  }
+
+  if (!dryRun) {
+    if (removed.length === 0) {
+      logInfo('No empty tool skills directories found.');
+    } else {
+      for (const p of removed) {
+        logSuccess(`Removed empty dir: ${p.replace(os.homedir(), '~')}`);
+      }
+    }
+  }
 }
 
 function logInfo(msg) {
@@ -480,6 +514,8 @@ function getToolSkillsPath(tool, silent = false) {
       return path.join(home, '.codex', 'skills');
     case 'opencode':
       return path.join(home, '.opencode', 'skills');
+    case 'gemini':
+      return path.join(home, '.gemini', 'skills');
     default:
       if (!silent) {
         logError(`Unknown target: ${tool}`);
@@ -552,9 +588,12 @@ function canCreateSymlink() {
     throw err;
   } finally {
     try {
-      if (fs.existsSync(linkPath)) fs.rmSync(linkPath, { recursive: true, force: true });
-      if (fs.existsSync(targetDir)) fs.rmSync(targetDir, { recursive: true, force: true });
-      if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
+      if (fs.existsSync(linkPath))
+        fs.rmSync(linkPath, { recursive: true, force: true });
+      if (fs.existsSync(targetDir))
+        fs.rmSync(targetDir, { recursive: true, force: true });
+      if (fs.existsSync(tmpDir))
+        fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch {}
   }
 }
@@ -564,14 +603,18 @@ function ensureSymlinkPrivilegeOrRelaunch() {
   if (canCreateSymlink()) return;
 
   if (process.env.EXPCAT_SKILLS_ELEVATED === '1') {
-    logError('Unable to create symlink. Please enable Developer Mode or run as Administrator and retry.');
+    logError(
+      'Unable to create symlink. Please enable Developer Mode or run as Administrator and retry.',
+    );
     process.exit(1);
   }
 
   logWarn('Symlink permission required. Requesting elevation...');
   const ok = relaunchAsAdmin();
   if (!ok) {
-    logError('Elevation was cancelled or failed. Please run as Administrator and retry.');
+    logError(
+      'Elevation was cancelled or failed. Please run as Administrator and retry.',
+    );
     process.exit(1);
   }
 
@@ -640,7 +683,9 @@ async function copySkill(src, destRoot, skillName) {
 async function linkSkillsDir(agentsRoot, tool) {
   const toolSkillsPath = getToolSkillsPath(tool);
   if (isSkillsLinked(tool)) {
-    logInfo(`${tool} already mapped to ${agentsRoot.replace(os.homedir(), '~')}`);
+    logInfo(
+      `${tool} already mapped to ${agentsRoot.replace(os.homedir(), '~')}`,
+    );
     return;
   }
 
@@ -667,7 +712,9 @@ async function linkSkillsDir(agentsRoot, tool) {
     toolSkillsPath,
     process.platform === 'win32' ? 'junction' : 'dir',
   );
-  logInfo(`Mapped: ${toolSkillsPath.replace(os.homedir(), '~')} -> ${agentsRoot.replace(os.homedir(), '~')}`);
+  logInfo(
+    `Mapped: ${toolSkillsPath.replace(os.homedir(), '~')} -> ${agentsRoot.replace(os.homedir(), '~')}`,
+  );
 }
 
 async function main() {
@@ -675,6 +722,11 @@ async function main() {
 
   if (cleanLogs) {
     purgeLogs();
+    process.exit(0);
+  }
+
+  if (cleanSkills) {
+    cleanEmptyToolSkillsDirs();
     process.exit(0);
   }
 
@@ -755,6 +807,7 @@ async function main() {
   } catch {}
 
   logInfo(`Done. Log saved: ${LOG_FILE}`);
+  process.exit(0);
 }
 
 main().catch((err) => {
