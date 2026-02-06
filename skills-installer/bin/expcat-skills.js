@@ -85,6 +85,12 @@ function logDirDefault() {
   return path.join(getHomeDir(), '.expcat-skills', 'logs');
 }
 
+function formatPathForDisplay(value) {
+  const home = getHomeDir();
+  if (!value || !home) return value;
+  return value.replace(home, '~');
+}
+
 const LOG_DIR = logDirDefault();
 let LOG_FILE = '';
 
@@ -783,7 +789,7 @@ async function main() {
   let preview = '';
   const agentsRoot = getAgentsSkillsRoot();
   const agentsDest = path.join(agentsRoot, skillName);
-  preview += `- agents -> ${agentsDest}${fs.existsSync(agentsDest) ? ' (conflict)' : ''}\n`;
+  preview += `- agents -> ${formatPathForDisplay(agentsDest)}${fs.existsSync(agentsDest) ? ' (conflict)' : ''}\n`;
 
   if (targets.length === 0) {
     preview += `- mapping -> (none)\n`;
@@ -791,7 +797,7 @@ async function main() {
     for (const t of targets) {
       const toolSkillsPath = getToolSkillsPath(t);
       const conflict = fs.existsSync(toolSkillsPath) && !isSkillsLinked(t);
-      preview += `- ${t} -> ${toolSkillsPath} -> ${agentsRoot}${conflict ? ' (conflict)' : ''}\n`;
+      preview += `- ${t} -> ${formatPathForDisplay(toolSkillsPath)} -> ${formatPathForDisplay(agentsRoot)}${conflict ? ' (conflict)' : ''}\n`;
     }
   }
 
