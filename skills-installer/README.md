@@ -4,7 +4,7 @@
 
 - GitHub 路径解析（支持仓库与子目录）
 - 逐级目录选择与一次确认
-- 统一安装到 ~/.agents/skills
+- 统一安装到 OS 对应的 ~/.agents/skills（Windows 为 C:\Users\{user}\.agents\skills）
 - 目标工具目录按需映射（Copilot/Claude/Codex/OpenCode/Gemini），可不选
 - 冲突提示（覆盖或重命名）
 - 交互式卸载已安装 skills（支持多选）
@@ -24,3 +24,25 @@ expcat-skills -ui --dry-run      # 预览卸载（不实际删除）
 expcat-skills --clean-logs
 expcat-skills --clean-skills     # 删除空的工具 skills 目录
 ```
+
+## 安装路径说明
+
+默认安装根目录：
+
+- macOS/Linux: ~/.agents/skills
+- Windows: C:\\Users\\{user}\\.agents\\skills
+
+各工具技能目录：
+
+- macOS/Linux:
+  - ~/.claude/skills
+  - ~/.copilot/skills
+  - ~/.codex/skills
+  - ~/.opencode/skills
+  - ~/.gemini/skills
+- Windows:
+  - C:\\Users\\{user}\\.claude\\skills
+  - C:\\Users\\{user}\\.copilot\\skills
+  - C:\\Users\\{user}\\.codex\\skills
+  - C:\\Users\\{user}\\.opencode\\skills
+  - C:\\Users\\{user}\\.gemini\\skills

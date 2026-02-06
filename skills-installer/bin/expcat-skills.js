@@ -74,8 +74,15 @@ function parseArgs() {
   }
 }
 
+function getHomeDir() {
+  if (process.platform === 'win32') {
+    return process.env.USERPROFILE || os.homedir();
+  }
+  return os.homedir();
+}
+
 function logDirDefault() {
-  return path.join(os.homedir(), '.expcat-skills', 'logs');
+  return path.join(getHomeDir(), '.expcat-skills', 'logs');
 }
 
 const LOG_DIR = logDirDefault();
@@ -138,7 +145,7 @@ function cleanEmptyToolSkillsDirs() {
       logInfo('No empty tool skills directories found.');
     } else {
       for (const p of removed) {
-        logSuccess(`Removed empty dir: ${p.replace(os.homedir(), '~')}`);
+        logSuccess(`Removed empty dir: ${p.replace(getHomeDir(), '~')}`);
       }
     }
   }
@@ -210,7 +217,7 @@ async function runUninstall() {
   const selected = await checkbox({
     message: 'Select skills to uninstall:',
     choices: skills.map((s) => ({
-      name: `${s.tool} / ${s.name} (${s.path.replace(os.homedir(), '~')})`,
+      name: `${s.tool} / ${s.name} (${s.path.replace(getHomeDir(), '~')})`,
       value: s,
     })),
   });
@@ -222,7 +229,7 @@ async function runUninstall() {
 
   console.log('\nSelected for removal:');
   for (const s of selected) {
-    console.log(`  - ${s.path.replace(os.homedir(), '~')}`);
+    console.log(`  - ${s.path.replace(getHomeDir(), '~')}`);
   }
   console.log('');
 
@@ -241,7 +248,7 @@ async function runUninstall() {
       logInfo(`[dry-run] Would delete: ${s.path}`);
     } else {
       fs.rmSync(s.path, { recursive: true, force: true });
-      logSuccess(`Deleted: ${s.path.replace(os.homedir(), '~')}`);
+      logSuccess(`Deleted: ${s.path.replace(getHomeDir(), '~')}`);
     }
   }
 
@@ -500,11 +507,11 @@ async function selectTargets() {
 }
 
 function getAgentsSkillsRoot() {
-  return path.join(os.homedir(), '.agents', 'skills');
+  return path.join(getHomeDir(), '.agents', 'skills');
 }
 
 function getToolSkillsPath(tool, silent = false) {
-  const home = os.homedir();
+  const home = getHomeDir();
   switch (tool) {
     case 'claude':
       return path.join(home, '.claude', 'skills');
@@ -684,7 +691,7 @@ async function linkSkillsDir(agentsRoot, tool) {
   const toolSkillsPath = getToolSkillsPath(tool);
   if (isSkillsLinked(tool)) {
     logInfo(
-      `${tool} already mapped to ${agentsRoot.replace(os.homedir(), '~')}`,
+      `${tool} already mapped to ${agentsRoot.replace(getHomeDir(), '~')}`,
     );
     return;
   }
@@ -713,7 +720,7 @@ async function linkSkillsDir(agentsRoot, tool) {
     process.platform === 'win32' ? 'junction' : 'dir',
   );
   logInfo(
-    `Mapped: ${toolSkillsPath.replace(os.homedir(), '~')} -> ${agentsRoot.replace(os.homedir(), '~')}`,
+    `Mapped: ${toolSkillsPath.replace(getHomeDir(), '~')} -> ${agentsRoot.replace(getHomeDir(), '~')}`,
   );
 }
 
