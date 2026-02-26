@@ -20,6 +20,8 @@ let dryRun = false;
 let cleanLogs = false;
 let cleanSkills = false;
 let uninstall = false;
+let listSkills = false;
+let showPaths = false;
 let githubInput = '';
 const TOOLS = ['copilot', 'claude', 'codex', 'opencode', 'gemini'];
 
@@ -33,7 +35,9 @@ function printHelp() {
 
 Options:
   -d, --dry-run         Preview only, no changes
-  -ui, --uninstall      Interactively uninstall installed skills
+  -l, --list            List installed skills in ~/.agents/skills
+  -p, --path            Show mapped tool directories
+  -u, --uninstall       Interactively uninstall installed skills
   --clean-logs          Remove all installer logs
   --clean-skills        Remove empty tool skills directories
   -v, --version         Show version number
@@ -41,7 +45,9 @@ Options:
 
 Examples:
   expcat-skills https://github.com/expcat/Tigercat/tree/main/skills/tigercat
-  expcat-skills -ui
+  expcat-skills -l                 # list installed skills
+  expcat-skills --path             # show mapped directories
+  expcat-skills -u
   expcat-skills --uninstall --dry-run
 `);
 }
@@ -55,7 +61,11 @@ function parseArgs() {
       cleanLogs = true;
     } else if (a === '--clean-skills') {
       cleanSkills = true;
-    } else if (a === '-ui' || a === '--uninstall') {
+    } else if (a === '-l' || a === '--list') {
+      listSkills = true;
+    } else if (a === '-p' || a === '--path') {
+      showPaths = true;
+    } else if (a === '-u' || a === '--uninstall') {
       uninstall = true;
     } else if (a === '--elevated') {
       process.env.EXPCAT_SKILLS_ELEVATED = '1';
@@ -162,6 +172,70 @@ function logWarn(msg) {
 function logError(msg) {
   console.error(`${COLORS.red}[error]${COLORS.reset} ${msg}`);
   if (LOG_FILE) fs.appendFileSync(LOG_FILE, `[error] ${msg}\n`, 'utf8');
+}
+
+// ============ List / Path Functions ============
+
+function runListSkills() {
+  const agentsRoot = getAgentsSkillsRoot();
+  if (!fs.existsSync(agentsRoot)) {
+    logWarn(`Skills root not found: ${agentsRoot.replace(os.homedir(), '~')}`);
+    logInfo('No skills installed yet.');
+    return;
+  }
+
+  const entries = fs.readdirSync(agentsRoot, { withFileTypes: true });
+  const skills = entries
+    .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+    .filter((e) => !isDirectoryEmpty(path.join(agentsRoot, e.name)))
+    .map((e) => e.name)
+    .sort();
+
+  if (skills.length === 0) {
+    logInfo('No skills installed yet.');
+    return;
+  }
+
+  const maxLen = Math.max(...skills.map((s) => s.length));
+  console.log('\nInstalled skills:');
+  for (const name of skills) {
+    const relPath = path.join(agentsRoot, name).replace(os.homedir(), '~');
+    console.log(`  ${name.padEnd(maxLen + 2)}${relPath}`);
+  }
+  console.log('');
+}
+
+function runShowPaths() {
+  const agentsRoot = getAgentsSkillsRoot();
+  const rootExists = fs.existsSync(agentsRoot);
+  const rootDisplay = agentsRoot.replace(os.homedir(), '~');
+
+  console.log(`\nSkills root: ${rootDisplay}${rootExists ? '' : '  (not found)'}`);
+  console.log('');
+
+  const maxToolLen = Math.max(...TOOLS.map((t) => t.length));
+  console.log('Tool directories:');
+  for (const tool of TOOLS) {
+    const toolPath = getToolSkillsPath(tool, true);
+    if (!toolPath) continue;
+    const toolDisplay = toolPath.replace(os.homedir(), '~');
+    const padded = tool.padEnd(maxToolLen + 2);
+
+    if (isSkillsLinked(tool)) {
+      console.log(
+        `  ${COLORS.green}${padded}${toolDisplay}  ->  ${rootDisplay}  (mapped)${COLORS.reset}`,
+      );
+    } else if (fs.existsSync(toolPath)) {
+      console.log(
+        `  ${COLORS.yellow}${padded}${toolDisplay}  (exists, not mapped)${COLORS.reset}`,
+      );
+    } else {
+      console.log(
+        `  ${padded}${toolDisplay}  (not found)`,
+      );
+    }
+  }
+  console.log('');
 }
 
 // ============ Uninstall Functions ============
@@ -727,6 +801,16 @@ async function main() {
 
   if (cleanSkills) {
     cleanEmptyToolSkillsDirs();
+    process.exit(0);
+  }
+
+  if (listSkills) {
+    runListSkills();
+    process.exit(0);
+  }
+
+  if (showPaths) {
+    runShowPaths();
     process.exit(0);
   }
 
