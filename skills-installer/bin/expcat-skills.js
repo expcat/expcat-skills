@@ -19,11 +19,11 @@ const args = process.argv.slice(2);
 let dryRun = false;
 let cleanLogs = false;
 let cleanSkills = false;
+let cleanMapping = false;
 let uninstall = false;
 let listSkills = false;
-let showPaths = false;
+let globalInstall = false;
 let githubInput = '';
-const TOOLS = ['copilot', 'claude', 'codex', 'opencode', 'gemini'];
 
 function printVersion() {
   const pkg = require('../package.json');
@@ -34,21 +34,25 @@ function printHelp() {
   console.log(`Usage: expcat-skills [options] <github_path_or_url>
 
 Options:
+  -g, --global          Install/uninstall to ~/.agents/skills (default: ./.agents/skills)
   -d, --dry-run         Preview only, no changes
-  -l, --list            List installed skills in ~/.agents/skills
-  -p, --path            Show mapped tool directories
+  -l, --list            List installed skills
   -u, --uninstall       Interactively uninstall installed skills
+  --clean-mapping       Remove tool directory symlinks (copilot/claude/codex/opencode/gemini)
   --clean-logs          Remove all installer logs
-  --clean-skills        Remove empty tool skills directories
+  --clean-skills        Remove empty skills directories
   -v, --version         Show version number
   -h, --help            Show this help
 
 Examples:
   expcat-skills https://github.com/expcat/Tigercat/tree/main/skills/tigercat
-  expcat-skills -l                 # list installed skills
-  expcat-skills --path             # show mapped directories
-  expcat-skills -u
-  expcat-skills --uninstall --dry-run
+  expcat-skills -g https://github.com/expcat/Tigercat/tree/main/skills/tigercat
+  expcat-skills -l                 # list skills in ./.agents/skills
+  expcat-skills -l -g              # list skills in ~/.agents/skills
+  expcat-skills -u                 # uninstall from ./.agents/skills
+  expcat-skills -u -g              # uninstall from ~/.agents/skills
+  expcat-skills --clean-mapping    # remove tool directory symlinks
+  expcat-skills --clean-mapping --dry-run
 `);
 }
 
@@ -61,14 +65,14 @@ function parseArgs() {
       cleanLogs = true;
     } else if (a === '--clean-skills') {
       cleanSkills = true;
+    } else if (a === '--clean-mapping') {
+      cleanMapping = true;
+    } else if (a === '-g' || a === '--global') {
+      globalInstall = true;
     } else if (a === '-l' || a === '--list') {
       listSkills = true;
-    } else if (a === '-p' || a === '--path') {
-      showPaths = true;
     } else if (a === '-u' || a === '--uninstall') {
       uninstall = true;
-    } else if (a === '--elevated') {
-      process.env.EXPCAT_SKILLS_ELEVATED = '1';
     } else if (a === '-v' || a === '--version') {
       printVersion();
       process.exit(0);
@@ -124,28 +128,35 @@ function purgeLogs() {
   console.log(`Logs cleaned: ${LOG_DIR}`);
 }
 
-function cleanEmptyToolSkillsDirs() {
+function cleanEmptySkillsDirs() {
+  const agentsRoot = getAgentsSkillsRoot(globalInstall);
+  if (!fs.existsSync(agentsRoot)) {
+    logInfo('Skills directory not found. Nothing to clean.');
+    return;
+  }
+
   const removed = [];
-  for (const tool of TOOLS) {
-    const skillsPath = getToolSkillsPath(tool, true);
-    if (!skillsPath || !fs.existsSync(skillsPath)) continue;
+  const entries = fs.readdirSync(agentsRoot, { withFileTypes: true });
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name.startsWith('.')) continue;
+    const dirPath = path.join(agentsRoot, e.name);
     try {
-      if (isDirectoryEmpty(skillsPath)) {
+      if (isDirectoryEmpty(dirPath)) {
         if (dryRun) {
-          logInfo(`[dry-run] Would remove empty dir: ${skillsPath}`);
+          logInfo(`[dry-run] Would remove empty dir: ${dirPath}`);
         } else {
-          fs.rmSync(skillsPath, { recursive: true, force: true });
-          removed.push(skillsPath);
+          fs.rmSync(dirPath, { recursive: true, force: true });
+          removed.push(dirPath);
         }
       }
     } catch (err) {
-      logWarn(`Failed to check ${skillsPath}: ${err?.message || err}`);
+      logWarn(`Failed to check ${dirPath}: ${err?.message || err}`);
     }
   }
 
   if (!dryRun) {
     if (removed.length === 0) {
-      logInfo('No empty tool skills directories found.');
+      logInfo('No empty skills directories found.');
     } else {
       for (const p of removed) {
         logSuccess(`Removed empty dir: ${p.replace(os.homedir(), '~')}`);
@@ -177,7 +188,7 @@ function logError(msg) {
 // ============ List / Path Functions ============
 
 function runListSkills() {
-  const agentsRoot = getAgentsSkillsRoot();
+  const agentsRoot = getAgentsSkillsRoot(globalInstall);
   if (!fs.existsSync(agentsRoot)) {
     logWarn(`Skills root not found: ${agentsRoot.replace(os.homedir(), '~')}`);
     logInfo('No skills installed yet.');
@@ -205,39 +216,6 @@ function runListSkills() {
   console.log('');
 }
 
-function runShowPaths() {
-  const agentsRoot = getAgentsSkillsRoot();
-  const rootExists = fs.existsSync(agentsRoot);
-  const rootDisplay = agentsRoot.replace(os.homedir(), '~');
-
-  console.log(`\nSkills root: ${rootDisplay}${rootExists ? '' : '  (not found)'}`);
-  console.log('');
-
-  const maxToolLen = Math.max(...TOOLS.map((t) => t.length));
-  console.log('Tool directories:');
-  for (const tool of TOOLS) {
-    const toolPath = getToolSkillsPath(tool, true);
-    if (!toolPath) continue;
-    const toolDisplay = toolPath.replace(os.homedir(), '~');
-    const padded = tool.padEnd(maxToolLen + 2);
-
-    if (isSkillsLinked(tool)) {
-      console.log(
-        `  ${COLORS.green}${padded}${toolDisplay}  ->  ${rootDisplay}  (mapped)${COLORS.reset}`,
-      );
-    } else if (fs.existsSync(toolPath)) {
-      console.log(
-        `  ${COLORS.yellow}${padded}${toolDisplay}  (exists, not mapped)${COLORS.reset}`,
-      );
-    } else {
-      console.log(
-        `  ${padded}${toolDisplay}  (not found)`,
-      );
-    }
-  }
-  console.log('');
-}
-
 // ============ Uninstall Functions ============
 
 function isDirectoryEmpty(dirPath) {
@@ -248,24 +226,19 @@ function isDirectoryEmpty(dirPath) {
 }
 
 function scanInstalledSkills() {
-  const tools = TOOLS;
+  const agentsRoot = getAgentsSkillsRoot(globalInstall);
   const results = [];
-  for (const tool of tools) {
-    const root = getToolSkillsPath(tool, true);
-    if (root && fs.existsSync(root)) {
-      const entries = fs.readdirSync(root, { withFileTypes: true });
-      for (const e of entries) {
-        if (e.isDirectory() && !e.name.startsWith('.')) {
-          const skillPath = path.join(root, e.name);
-          // Filter out empty directories
-          if (!isDirectoryEmpty(skillPath)) {
-            results.push({
-              tool,
-              name: e.name,
-              path: skillPath,
-            });
-          }
-        }
+  if (!fs.existsSync(agentsRoot)) return results;
+
+  const entries = fs.readdirSync(agentsRoot, { withFileTypes: true });
+  for (const e of entries) {
+    if (e.isDirectory() && !e.name.startsWith('.')) {
+      const skillPath = path.join(agentsRoot, e.name);
+      if (!isDirectoryEmpty(skillPath)) {
+        results.push({
+          name: e.name,
+          path: skillPath,
+        });
       }
     }
   }
@@ -273,7 +246,7 @@ function scanInstalledSkills() {
 }
 
 async function runUninstall() {
-  logInfo('Scanning installed skills...');
+  logInfo(`Scanning installed skills (${globalInstall ? 'global' : 'local'})...`);
   const skills = scanInstalledSkills();
 
   if (skills.length === 0) {
@@ -284,7 +257,7 @@ async function runUninstall() {
   const selected = await checkbox({
     message: 'Select skills to uninstall:',
     choices: skills.map((s) => ({
-      name: `${s.tool} / ${s.name} (${s.path.replace(os.homedir(), '~')})`,
+      name: `${s.name} (${s.path.replace(os.homedir(), '~')})`,
       value: s,
     })),
   });
@@ -559,140 +532,51 @@ async function selectDirectoryStepwise(basePath) {
   }
 }
 
-async function selectTargets() {
-  const choices = getAvailableTargets();
-  if (choices.length === 0) {
-    logInfo('All targets already mapped. Skip target selection.');
-    return [];
+function getAgentsSkillsRoot(isGlobal) {
+  if (isGlobal) {
+    return path.join(os.homedir(), '.agents', 'skills');
   }
-  const selected = await checkbox({
-    message: 'Select install targets:',
-    choices: choices.map((t) => ({ name: t, value: t })),
-  });
-
-  return selected;
+  return path.resolve('.agents', 'skills');
 }
 
-function getAgentsSkillsRoot() {
-  return path.join(os.homedir(), '.agents', 'skills');
-}
-
-function getToolSkillsPath(tool, silent = false) {
+function runCleanMapping() {
+  const toolNames = ['copilot', 'claude', 'codex', 'opencode', 'gemini'];
   const home = os.homedir();
-  switch (tool) {
-    case 'claude':
-      return path.join(home, '.claude', 'skills');
-    case 'copilot':
-      return path.join(home, '.copilot', 'skills');
-    case 'codex':
-      return path.join(home, '.codex', 'skills');
-    case 'opencode':
-      return path.join(home, '.opencode', 'skills');
-    case 'gemini':
-      return path.join(home, '.gemini', 'skills');
-    default:
-      if (!silent) {
-        logError(`Unknown target: ${tool}`);
-        process.exit(1);
-      }
-      return null;
-  }
-}
+  const globalRoot = path.join(home, '.agents', 'skills');
+  const removed = [];
 
-function getAvailableTargets() {
-  return TOOLS.filter((t) => !isSkillsLinked(t));
-}
-
-function resolveLinkTarget(linkPath, linkTarget) {
-  if (path.isAbsolute(linkTarget)) return path.resolve(linkTarget);
-  return path.resolve(path.dirname(linkPath), linkTarget);
-}
-
-function isSkillsLinked(tool) {
-  const toolSkillsPath = getToolSkillsPath(tool, true);
-  if (!toolSkillsPath || !fs.existsSync(toolSkillsPath)) return false;
-  try {
-    const stat = fs.lstatSync(toolSkillsPath);
-    if (!stat.isSymbolicLink()) return false;
-    const linkTarget = fs.readlinkSync(toolSkillsPath);
-    const resolved = resolveLinkTarget(toolSkillsPath, linkTarget);
-    return path.resolve(resolved) === path.resolve(getAgentsSkillsRoot());
-  } catch {
-    return false;
-  }
-}
-
-function psQuote(value) {
-  return `'${String(value).replace(/'/g, "''")}'`;
-}
-
-function psArray(values) {
-  return `@(${values.map(psQuote).join(',')})`;
-}
-
-function relaunchAsAdmin() {
-  const argv = process.argv.slice(1);
-  if (!argv.includes('--elevated')) argv.push('--elevated');
-  const command = `Start-Process -FilePath ${psQuote(
-    process.execPath,
-  )} -ArgumentList ${psArray(argv)} -WorkingDirectory ${psQuote(
-    process.cwd(),
-  )} -Verb RunAs`;
-
-  const res = spawnSync('powershell', ['-NoProfile', '-Command', command], {
-    stdio: 'inherit',
-  });
-  return res.status === 0;
-}
-
-function canCreateSymlink() {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'expcat-skills-link-'));
-  const targetDir = path.join(tmpDir, 'target');
-  const linkPath = path.join(tmpDir, 'link');
-  fs.mkdirSync(targetDir, { recursive: true });
-  try {
-    fs.symlinkSync(
-      targetDir,
-      linkPath,
-      process.platform === 'win32' ? 'junction' : 'dir',
-    );
-    return true;
-  } catch (err) {
-    if (err && (err.code === 'EPERM' || err.code === 'EACCES')) return false;
-    throw err;
-  } finally {
+  for (const tool of toolNames) {
+    const toolSkillsPath = path.join(home, `.${tool}`, 'skills');
+    if (!fs.existsSync(toolSkillsPath)) continue;
     try {
-      if (fs.existsSync(linkPath))
-        fs.rmSync(linkPath, { recursive: true, force: true });
-      if (fs.existsSync(targetDir))
-        fs.rmSync(targetDir, { recursive: true, force: true });
-      if (fs.existsSync(tmpDir))
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {}
-  }
-}
+      const stat = fs.lstatSync(toolSkillsPath);
+      if (!stat.isSymbolicLink()) continue;
+      const linkTarget = fs.readlinkSync(toolSkillsPath);
+      const resolved = path.isAbsolute(linkTarget)
+        ? path.resolve(linkTarget)
+        : path.resolve(path.dirname(toolSkillsPath), linkTarget);
+      if (path.resolve(resolved) !== path.resolve(globalRoot)) continue;
 
-function ensureSymlinkPrivilegeOrRelaunch() {
-  if (process.platform !== 'win32') return;
-  if (canCreateSymlink()) return;
-
-  if (process.env.EXPCAT_SKILLS_ELEVATED === '1') {
-    logError(
-      'Unable to create symlink. Please enable Developer Mode or run as Administrator and retry.',
-    );
-    process.exit(1);
+      if (dryRun) {
+        logInfo(`[dry-run] Would remove symlink: ${toolSkillsPath.replace(home, '~')}`);
+      } else {
+        fs.unlinkSync(toolSkillsPath);
+        removed.push(toolSkillsPath);
+      }
+    } catch (err) {
+      logWarn(`Failed to check ${toolSkillsPath}: ${err?.message || err}`);
+    }
   }
 
-  logWarn('Symlink permission required. Requesting elevation...');
-  const ok = relaunchAsAdmin();
-  if (!ok) {
-    logError(
-      'Elevation was cancelled or failed. Please run as Administrator and retry.',
-    );
-    process.exit(1);
+  if (!dryRun) {
+    if (removed.length === 0) {
+      logInfo('No tool directory symlinks found.');
+    } else {
+      for (const p of removed) {
+        logSuccess(`Removed symlink: ${p.replace(home, '~')}`);
+      }
+    }
   }
-
-  process.exit(0);
 }
 
 async function confirmPreview(preview) {
@@ -754,43 +638,6 @@ async function copySkill(src, destRoot, skillName) {
   }
 }
 
-async function linkSkillsDir(agentsRoot, tool) {
-  const toolSkillsPath = getToolSkillsPath(tool);
-  if (isSkillsLinked(tool)) {
-    logInfo(
-      `${tool} already mapped to ${agentsRoot.replace(os.homedir(), '~')}`,
-    );
-    return;
-  }
-
-  if (fs.existsSync(toolSkillsPath)) {
-    const overwrite = await confirm({
-      message: `${tool} skills directory exists. Replace with symlink?`,
-      default: false,
-    });
-    if (!overwrite) {
-      logWarn(`Skipped mapping for ${tool}.`);
-      return;
-    }
-    if (!dryRun) fs.rmSync(toolSkillsPath, { recursive: true, force: true });
-  }
-
-  if (dryRun) {
-    logInfo(`[dry-run] Link ${toolSkillsPath} -> ${agentsRoot}`);
-    return;
-  }
-
-  fs.mkdirSync(path.dirname(toolSkillsPath), { recursive: true });
-  fs.symlinkSync(
-    agentsRoot,
-    toolSkillsPath,
-    process.platform === 'win32' ? 'junction' : 'dir',
-  );
-  logInfo(
-    `Mapped: ${toolSkillsPath.replace(os.homedir(), '~')} -> ${agentsRoot.replace(os.homedir(), '~')}`,
-  );
-}
-
 async function main() {
   parseArgs();
 
@@ -799,18 +646,18 @@ async function main() {
     process.exit(0);
   }
 
+  if (cleanMapping) {
+    runCleanMapping();
+    process.exit(0);
+  }
+
   if (cleanSkills) {
-    cleanEmptyToolSkillsDirs();
+    cleanEmptySkillsDirs();
     process.exit(0);
   }
 
   if (listSkills) {
     runListSkills();
-    process.exit(0);
-  }
-
-  if (showPaths) {
-    runShowPaths();
     process.exit(0);
   }
 
@@ -851,26 +698,13 @@ async function main() {
   }
 
   const skillName = path.basename(selectedDir);
-  const targets = await selectTargets();
-
-  if (targets.length > 0 && !dryRun) {
-    ensureSymlinkPrivilegeOrRelaunch();
-  }
+  const agentsRoot = getAgentsSkillsRoot(globalInstall);
+  const agentsDest = path.join(agentsRoot, skillName);
 
   let preview = '';
-  const agentsRoot = getAgentsSkillsRoot();
-  const agentsDest = path.join(agentsRoot, skillName);
-  preview += `- agents -> ${agentsDest}${fs.existsSync(agentsDest) ? ' (conflict)' : ''}\n`;
-
-  if (targets.length === 0) {
-    preview += `- mapping -> (none)\n`;
-  } else {
-    for (const t of targets) {
-      const toolSkillsPath = getToolSkillsPath(t);
-      const conflict = fs.existsSync(toolSkillsPath) && !isSkillsLinked(t);
-      preview += `- ${t} -> ${toolSkillsPath} -> ${agentsRoot}${conflict ? ' (conflict)' : ''}\n`;
-    }
-  }
+  const scope = globalInstall ? 'global' : 'local';
+  preview += `- scope: ${scope}\n`;
+  preview += `- ${skillName} -> ${agentsDest.replace(os.homedir(), '~')}${fs.existsSync(agentsDest) ? ' (conflict)' : ''}\n`;
 
   const ok = await confirmPreview(preview);
   if (!ok) {
@@ -879,10 +713,6 @@ async function main() {
   }
 
   await copySkill(selectedDir, agentsRoot, skillName);
-
-  for (const t of targets) {
-    await linkSkillsDir(agentsRoot, t);
-  }
 
   // Clean up temporary directory immediately after copying
   try {
