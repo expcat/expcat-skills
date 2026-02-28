@@ -5,7 +5,7 @@ const path = require('path');
 const os = require('os');
 const readline = require('readline');
 const { spawnSync } = require('child_process');
-const { checkbox, confirm } = require('@inquirer/prompts');
+const { checkbox, confirm, select, input } = require('@inquirer/prompts');
 
 const COLORS = {
   red: '\x1b[31m',
@@ -14,6 +14,17 @@ const COLORS = {
   blue: '\x1b[34m',
   reset: '\x1b[0m',
 };
+
+function tildify(p) {
+  return p.replace(os.homedir(), '~');
+}
+
+function makeLogger(level, color, stream = console.log) {
+  return (msg) => {
+    stream(`${color}[${level}]${COLORS.reset} ${msg}`);
+    if (LOG_FILE) fs.appendFileSync(LOG_FILE, `[${level}] ${msg}\n`, 'utf8');
+  };
+}
 
 const args = process.argv.slice(2);
 let dryRun = false;
@@ -88,11 +99,7 @@ function parseArgs() {
   }
 }
 
-function logDirDefault() {
-  return path.join(os.homedir(), '.expcat-skills', 'logs');
-}
-
-const LOG_DIR = logDirDefault();
+const LOG_DIR = path.join(os.homedir(), '.expcat-skills', 'logs');
 let LOG_FILE = '';
 
 function initLog() {
@@ -135,119 +142,67 @@ function cleanEmptySkillsDirs() {
     return;
   }
 
-  const removed = [];
-  const entries = fs.readdirSync(agentsRoot, { withFileTypes: true });
-  for (const e of entries) {
-    if (!e.isDirectory() || e.name.startsWith('.')) continue;
-    const dirPath = path.join(agentsRoot, e.name);
-    try {
-      if (isDirectoryEmpty(dirPath)) {
-        if (dryRun) {
-          logInfo(`[dry-run] Would remove empty dir: ${dirPath}`);
-        } else {
-          fs.rmSync(dirPath, { recursive: true, force: true });
-          removed.push(dirPath);
-        }
-      }
-    } catch (err) {
-      logWarn(`Failed to check ${dirPath}: ${err?.message || err}`);
-    }
-  }
+  const emptyDirs = listSkillDirs(agentsRoot, { includeEmpty: true })
+    .filter((s) => isDirectoryEmpty(s.path));
 
-  if (!dryRun) {
-    if (removed.length === 0) {
-      logInfo('No empty skills directories found.');
-    } else {
-      for (const p of removed) {
-        logSuccess(`Removed empty dir: ${p.replace(os.homedir(), '~')}`);
-      }
-    }
-  }
-}
-
-function logInfo(msg) {
-  console.log(`${COLORS.blue}[info]${COLORS.reset} ${msg}`);
-  if (LOG_FILE) fs.appendFileSync(LOG_FILE, `[info] ${msg}\n`, 'utf8');
-}
-
-function logSuccess(msg) {
-  console.log(`${COLORS.green}[success]${COLORS.reset} ${msg}`);
-  if (LOG_FILE) fs.appendFileSync(LOG_FILE, `[success] ${msg}\n`, 'utf8');
-}
-
-function logWarn(msg) {
-  console.log(`${COLORS.yellow}[warn]${COLORS.reset} ${msg}`);
-  if (LOG_FILE) fs.appendFileSync(LOG_FILE, `[warn] ${msg}\n`, 'utf8');
-}
-
-function logError(msg) {
-  console.error(`${COLORS.red}[error]${COLORS.reset} ${msg}`);
-  if (LOG_FILE) fs.appendFileSync(LOG_FILE, `[error] ${msg}\n`, 'utf8');
-}
-
-// ============ List / Path Functions ============
-
-function runListSkills() {
-  const agentsRoot = getAgentsSkillsRoot(globalInstall);
-  if (!fs.existsSync(agentsRoot)) {
-    logWarn(`Skills root not found: ${agentsRoot.replace(os.homedir(), '~')}`);
-    logInfo('No skills installed yet.');
+  if (emptyDirs.length === 0) {
+    logInfo('No empty skills directories found.');
     return;
   }
 
-  const entries = fs.readdirSync(agentsRoot, { withFileTypes: true });
-  const skills = entries
+  for (const s of emptyDirs) {
+    if (dryRun) {
+      logInfo(`[dry-run] Would remove empty dir: ${s.path}`);
+    } else {
+      fs.rmSync(s.path, { recursive: true, force: true });
+      logSuccess(`Removed empty dir: ${tildify(s.path)}`);
+    }
+  }
+}
+
+const logInfo = makeLogger('info', COLORS.blue);
+const logSuccess = makeLogger('success', COLORS.green);
+const logWarn = makeLogger('warn', COLORS.yellow);
+const logError = makeLogger('error', COLORS.red, console.error);
+
+// ============ Directory Helpers ============
+
+function isDirectoryEmpty(dirPath) {
+  const entries = fs.readdirSync(dirPath);
+  return entries.filter((e) => !e.startsWith('.')).length === 0;
+}
+
+function listSkillDirs(agentsRoot, { includeEmpty = false } = {}) {
+  if (!fs.existsSync(agentsRoot)) return [];
+  return fs.readdirSync(agentsRoot, { withFileTypes: true })
     .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
-    .filter((e) => !isDirectoryEmpty(path.join(agentsRoot, e.name)))
-    .map((e) => e.name)
-    .sort();
+    .map((e) => ({ name: e.name, path: path.join(agentsRoot, e.name) }))
+    .filter((s) => includeEmpty || !isDirectoryEmpty(s.path))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// ============ List / Uninstall ============
+
+function runListSkills() {
+  const agentsRoot = getAgentsSkillsRoot(globalInstall);
+  const skills = listSkillDirs(agentsRoot);
 
   if (skills.length === 0) {
     logInfo('No skills installed yet.');
     return;
   }
 
-  const maxLen = Math.max(...skills.map((s) => s.length));
+  const maxLen = Math.max(...skills.map((s) => s.name.length));
   console.log('\nInstalled skills:');
-  for (const name of skills) {
-    const relPath = path.join(agentsRoot, name).replace(os.homedir(), '~');
-    console.log(`  ${name.padEnd(maxLen + 2)}${relPath}`);
+  for (const s of skills) {
+    console.log(`  ${s.name.padEnd(maxLen + 2)}${tildify(s.path)}`);
   }
   console.log('');
 }
 
-// ============ Uninstall Functions ============
-
-function isDirectoryEmpty(dirPath) {
-  const entries = fs.readdirSync(dirPath);
-  // Filter out hidden files like .DS_Store
-  const realFiles = entries.filter((e) => !e.startsWith('.'));
-  return realFiles.length === 0;
-}
-
-function scanInstalledSkills() {
-  const agentsRoot = getAgentsSkillsRoot(globalInstall);
-  const results = [];
-  if (!fs.existsSync(agentsRoot)) return results;
-
-  const entries = fs.readdirSync(agentsRoot, { withFileTypes: true });
-  for (const e of entries) {
-    if (e.isDirectory() && !e.name.startsWith('.')) {
-      const skillPath = path.join(agentsRoot, e.name);
-      if (!isDirectoryEmpty(skillPath)) {
-        results.push({
-          name: e.name,
-          path: skillPath,
-        });
-      }
-    }
-  }
-  return results;
-}
-
 async function runUninstall() {
   logInfo(`Scanning installed skills (${globalInstall ? 'global' : 'local'})...`);
-  const skills = scanInstalledSkills();
+  const skills = listSkillDirs(getAgentsSkillsRoot(globalInstall));
 
   if (skills.length === 0) {
     logWarn('No installed skills found.');
@@ -257,7 +212,7 @@ async function runUninstall() {
   const selected = await checkbox({
     message: 'Select skills to uninstall:',
     choices: skills.map((s) => ({
-      name: `${s.name} (${s.path.replace(os.homedir(), '~')})`,
+      name: `${s.name} (${tildify(s.path)})`,
       value: s,
     })),
   });
@@ -269,7 +224,7 @@ async function runUninstall() {
 
   console.log('\nSelected for removal:');
   for (const s of selected) {
-    console.log(`  - ${s.path.replace(os.homedir(), '~')}`);
+    console.log(`  - ${tildify(s.path)}`);
   }
   console.log('');
 
@@ -288,7 +243,7 @@ async function runUninstall() {
       logInfo(`[dry-run] Would delete: ${s.path}`);
     } else {
       fs.rmSync(s.path, { recursive: true, force: true });
-      logSuccess(`Deleted: ${s.path.replace(os.homedir(), '~')}`);
+      logSuccess(`Deleted: ${tildify(s.path)}`);
     }
   }
 
@@ -296,28 +251,20 @@ async function runUninstall() {
 }
 
 function requireGit() {
-  const result = spawnSync('git', ['--version'], { stdio: 'ignore' });
+  const result = spawnSync('git', ['--version'], { encoding: 'utf8' });
   if (result.status !== 0) {
     logError('Missing required command: git');
     process.exit(1);
   }
+  const match = result.stdout.match(/git version (\d+)\.(\d+)/);
+  return match
+    ? { major: parseInt(match[1], 10), minor: parseInt(match[2], 10) }
+    : { major: 0, minor: 0 };
 }
 
-function getGitVersion() {
-  const result = spawnSync('git', ['--version'], { encoding: 'utf8' });
-  if (result.status === 0) {
-    const match = result.stdout.match(/git version (\d+)\.(\d+)/);
-    if (match) {
-      return { major: parseInt(match[1], 10), minor: parseInt(match[2], 10) };
-    }
-  }
-  return { major: 0, minor: 0 };
-}
-
-function supportsSparseCheckout() {
-  const version = getGitVersion();
+function supportsSparseCheckout(gitVersion) {
   // sparse-checkout command available since Git 2.25
-  return version.major > 2 || (version.major === 2 && version.minor >= 25);
+  return gitVersion.major > 2 || (gitVersion.major === 2 && gitVersion.minor >= 25);
 }
 
 function normalizeGithubInput(input) {
@@ -436,9 +383,9 @@ function cloneRepoSparse(owner, repo, ref, subpath, dest) {
   return true;
 }
 
-function cloneRepo(owner, repo, ref, subpath, dest) {
+function cloneRepo(owner, repo, ref, subpath, dest, gitVersion) {
   // Try sparse-checkout if subpath exists and Git supports it
-  if (subpath && supportsSparseCheckout()) {
+  if (subpath && supportsSparseCheckout(gitVersion)) {
     logInfo('Using sparse-checkout to minimize download...');
     const success = cloneRepoSparse(owner, repo, ref, subpath, dest);
     if (success) {
@@ -477,7 +424,7 @@ async function selectDirectoryStepwise(basePath) {
 
     const entries = fs.readdirSync(current, { withFileTypes: true });
     const dirs = entries
-      .filter((e) => e.isDirectory())
+      .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
       .map((e) => e.name)
       .sort();
 
@@ -558,7 +505,7 @@ function runCleanMapping() {
       if (path.resolve(resolved) !== path.resolve(globalRoot)) continue;
 
       if (dryRun) {
-        logInfo(`[dry-run] Would remove symlink: ${toolSkillsPath.replace(home, '~')}`);
+        logInfo(`[dry-run] Would remove symlink: ${tildify(toolSkillsPath)}`);
       } else {
         fs.unlinkSync(toolSkillsPath);
         removed.push(toolSkillsPath);
@@ -573,7 +520,7 @@ function runCleanMapping() {
       logInfo('No tool directory symlinks found.');
     } else {
       for (const p of removed) {
-        logSuccess(`Removed symlink: ${p.replace(home, '~')}`);
+        logSuccess(`Removed symlink: ${tildify(p)}`);
       }
     }
   }
@@ -582,40 +529,27 @@ function runCleanMapping() {
 async function confirmPreview(preview) {
   console.log('\nPreview:');
   console.log(preview);
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  const answer = await rlPrompt(rl, 'Proceed? [y/N] ');
-  rl.close();
-  return /^y$/i.test(answer);
+  return confirm({ message: 'Proceed?', default: false });
 }
 
 async function handleConflict(dest) {
   if (!fs.existsSync(dest)) return '';
 
-  console.log(`Target exists: ${dest}`);
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
+  logWarn(`Target exists: ${tildify(dest)}`);
+  const action = await select({
+    message: 'How to resolve?',
+    choices: [
+      { name: 'Rename', value: 'rename' },
+      { name: 'Overwrite', value: 'overwrite' },
+    ],
   });
-  const action = await rlPrompt(rl, 'Overwrite (o) / Rename (r) ? [r] ');
-  if (!action || /^r$/i.test(action)) {
-    const newName = await rlPrompt(rl, 'New name: ');
-    rl.close();
-    if (!newName) {
-      logError('Name cannot be empty');
-      process.exit(1);
-    }
-    return newName;
-  }
-  if (/^o$/i.test(action)) {
-    rl.close();
-    return '__overwrite__';
-  }
-  rl.close();
-  logWarn('Invalid choice');
-  return handleConflict(dest);
+  if (action === 'overwrite') return '__overwrite__';
+
+  const newName = await input({
+    message: 'New name:',
+    validate: (v) => (v.trim() ? true : 'Name cannot be empty'),
+  });
+  return newName.trim();
 }
 
 async function copySkill(src, destRoot, skillName) {
@@ -671,7 +605,7 @@ async function main() {
     process.exit(1);
   }
 
-  requireGit();
+  const gitVersion = requireGit();
   initLog();
 
   const { owner, repo, ref, subpath } = parseGithubParts(githubInput);
@@ -686,7 +620,7 @@ async function main() {
   });
 
   logInfo('Downloading repository...');
-  cloneRepo(owner, repo, ref, subpath, tmpDir);
+  cloneRepo(owner, repo, ref, subpath, tmpDir, gitVersion);
 
   let basePath = tmpDir;
   if (subpath) basePath = path.join(tmpDir, subpath);
@@ -704,7 +638,7 @@ async function main() {
   let preview = '';
   const scope = globalInstall ? 'global' : 'local';
   preview += `- scope: ${scope}\n`;
-  preview += `- ${skillName} -> ${agentsDest.replace(os.homedir(), '~')}${fs.existsSync(agentsDest) ? ' (conflict)' : ''}\n`;
+  preview += `- ${skillName} -> ${tildify(agentsDest)}${fs.existsSync(agentsDest) ? ' (conflict)' : ''}\n`;
 
   const ok = await confirmPreview(preview);
   if (!ok) {
